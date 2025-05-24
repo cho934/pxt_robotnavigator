@@ -3,7 +3,7 @@
  * Navigation autonome avec correction vectorielle
  */
 
-//% weight=100 color=#0fbc11 icon="\uf1b9" block="Robot Navigator"
+//% weight=100 color=#9f33ff icon="\uf1b9" block="Robot Navigator"
 //% groups=['Configuration', 'Navigation', 'Paramètres', 'Debug']
 namespace robotNavigator {
 
@@ -365,4 +365,211 @@ namespace robotNavigator {
             }
         }
     });
+}
+
+
+//% weight=100 color=#9f33ff icon="\uf1b9" block="Odometry"
+namespace odometry {
+    // Global variables for position tracking
+    export let X = 0;           // X position in mm
+    export let Y = 0;           // Y position in mm  
+    export let alphaRad = 0;    // Orientation angle in radians
+
+    // Configuration parameters
+    export let entraxeInMM = 100;   // Distance between wheels in mm
+    export let ticksPerMeter = 200000;   // Number of ticks per meter
+
+    /**
+     * Initialize the odometry module with specific parameters
+     * @param trackWidth Distance between encoders' wheels in mm
+     * @param ticksPerMeter Number of encoder ticks per meter
+     */
+    //% block="initialize odometry with trackWidth %trackWidth|mm and %ticksPerMeter|ticks per meter"
+    export function initialize(entraxe_mm: number, nbticksPerMeter: number) {
+        entraxeInMM = entraxe_mm;
+        ticksPerMeter = nbticksPerMeter;
+        X = 0;
+        Y = 0;
+        alphaRad = 0;
+    }
+
+    /**
+     * Reset position and orientation to zero
+     */
+    //% block="reset odometry"
+    export function reset() {
+        X = 0;
+        Y = 0;
+        alphaRad = 0;
+    }
+
+    /**
+     * Set position and orientation to specific values
+     * @param x X position in mm
+     * @param y Y position in mm
+     * @param angle Orientation in radians
+     */
+    //% block="set position to x: %x|y: %y|angle: %angle"
+    export function setPosition(x: number, y: number, anglerad: number) {
+        X = x;
+        Y = y;
+        alphaRad = anglerad;
+    }
+
+    /**
+     * Normalize angle to the range [-π, π]
+     * @param angle Angle in radians to normalize
+     * @returns Normalized angle in range [-π, π]
+     */
+    //% block="Normalize angle %angle to range [-π, π]"
+    export function normalizeAngle(angle: number): number {
+        let result = angle;
+        while (result > Math.PI) {
+            result -= 2 * Math.PI;
+        }
+        while (result <= -Math.PI) {
+            result += 2 * Math.PI;
+        }
+        return result;
+    }
+
+    /**
+     * Update odometry with new encoder values in mm
+     * @param leftDeltaMm Left encoder delta in mm
+     * @param rightDeltaMm Right encoder delta in mm
+     */
+    //% block="update with leftDelta: %leftDeltaMm|mm + rightDelta: %rightDeltaMm|mm"
+    export function update(leftDeltaMm: number, rightDeltaMm: number) {
+        // Calculate distance traveled and angle variation
+        let deltaDist = (leftDeltaMm + rightDeltaMm) / 2;
+        let diffCount = rightDeltaMm - leftDeltaMm;
+        let deltaTheta = diffCount / entraxeInMM; // In radians
+
+        if (Math.abs(diffCount) < 0.001) {
+            // Movement is essentially straight
+            X += deltaDist * Math.cos(alphaRad);
+            Y += deltaDist * Math.sin(alphaRad);
+        } else {
+            // Robot follows an arc
+            // Calculate the radius of curvature
+            let R = deltaDist / deltaTheta;
+
+            // Update position
+            X += R * (-Math.sin(alphaRad) + Math.sin(alphaRad + deltaTheta));
+            Y += R * (Math.cos(alphaRad) - Math.cos(alphaRad + deltaTheta));
+
+            // Update heading
+            alphaRad += deltaTheta;
+
+            // Normalize angle to [-π, π]
+            alphaRad = normalizeAngle(alphaRad);
+        }
+    }
+
+    /**
+     * Update odometry with new encoder values in ticks
+     * @param leftDeltaTicks Left encoder delta in ticks
+     * @param rightDeltaTicks Right encoder delta in ticks
+     */
+    //% block="update with leftDelta: %leftDeltaTicks|ticks + rightDelta: %rightDeltaTicks|ticks"
+    export function updateFromTicks(leftDeltaTicks: number, rightDeltaTicks: number) {
+        // Convert ticks to mm
+        let leftDeltaMm = leftDeltaTicks * 1000 / ticksPerMeter;
+        let rightDeltaMm = rightDeltaTicks * 1000 / ticksPerMeter;
+
+        // Call the regular update function
+        update(leftDeltaMm, rightDeltaMm);
+    }
+
+    /**
+     * Get current X position in mm
+     */
+    //% block="get X position (mm)"
+    export function getX(): number {
+        return X;
+    }
+
+    /**
+     * Get current Y position in mm
+     */
+    //% block="get Y position (mm)"
+    export function getY(): number {
+        return Y;
+    }
+
+    /**
+     * Get current orientation in radians
+     */
+    //% block="get orientation (radians)"
+    export function getOrientationRad(): number {
+        return alphaRad;
+    }
+
+    /**
+     * Get current orientation in degrees
+     */
+    //% block="get orientation (degrees)"
+    export function getOrientationDegrees(): number {
+        return alphaRad * 180 / Math.PI;
+    }
+
+    /**
+     * Calculate distance to a point
+     * @param x X coordinate of the target point in mm
+     * @param y Y coordinate of the target point in mm
+     */
+    //% block="distance to point x: %x|y: %y"
+    export function distanceTo(x: number, y: number): number {
+        let dx = x - X;
+        let dy = y - Y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /**
+     * Calculate angle in radians to a point (relative to current orientation)
+     * @param x X coordinate of the target point in mm
+     * @param y Y coordinate of the target point in mm
+     */
+    //% block="angle to point x: %x|y: %y"
+    export function angleTo(x: number, y: number): number {
+        let dx2 = x - X;
+        let dy2 = y - Y;
+        let targetAngle = Math.atan2(dy2, dx2);
+
+        // Calculate the difference and normalize to [-π, π]
+        let angleDiff = targetAngle - alphaRad;
+        return normalizeAngle(angleDiff);
+    }
+
+
+
+
+
+
+    /**
+     * Example of how to set up a continuous odometry update
+     * Call this from your main program, not used directly by RobotMovement
+     * @param leftDeltaProvider Function to get left encoder delta (in ticks)
+     * @param rightDeltaProvider Function to get right encoder delta (in ticks)
+     */
+    //% block="Start odometry update loop with %leftDeltaProvider and %rightDeltaProvider"
+    //% draggableParameters="reporter"
+    //% weight=40
+    export function startOdometryUpdateLoop(
+        leftDeltaProvider: () => number,
+        rightDeltaProvider: () => number
+    ): void {
+        // Create a background loop to update odometry every 50ms
+        control.inBackground(() => {
+            while (true) {
+                // Get deltas from encoders
+                const leftDelta = leftDeltaProvider();
+                const rightDelta = rightDeltaProvider();
+                // Update odometry
+                odometry.updateFromTicks(leftDelta, rightDelta);
+                // Wait for next update cycle
+                basic.pause(50);
+            }
+        });
+    }
 }
