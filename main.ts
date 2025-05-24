@@ -3,7 +3,7 @@
  * Navigation autonome avec correction vectorielle
  */
 
-//% weight=100 color=#9f33ff icon="\uf1b9" block="Robot Navigator"
+//% weight=100 color=#1d26a5 icon="\uf1b9" block="Robot Navigator"
 //% groups=['Configuration', 'Navigation', 'Paramètres', 'Debug']
 namespace robotNavigator {
 
@@ -368,7 +368,7 @@ namespace robotNavigator {
 }
 
 
-//% weight=100 color=#9f33ff icon="\uf1b9" block="Odometry"
+//% weight=100 color=#1d26a5 icon="\uf1b9" block="Odometry"
 namespace odometry {
     // Global variables for position tracking
     export let X = 0;           // X position in mm
