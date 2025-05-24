@@ -1,13 +1,11 @@
 {
     "name": "pxt_robotnavigator",
-    "description": "",
+    "version": "1.0.0",
+    "description": "Extension de navigation autonome pour robots micro:bit avec correction vectorielle",
     "dependencies": {
-        "core": "*",
-        "radio": "*",
-        "microphone": "*"
+        "core": "*"
     },
     "files": [
-        "main.blocks",
         "main.ts",
         "README.md"
     ],
@@ -21,5 +19,6 @@
     "supportedTargets": [
         "microbit"
     ],
-    "preferredEditor": "tsprj"
+    "preferredEditor": "tsprj",
+    "languageRestriction": "javascript-only"
 }
