@@ -1,35 +1,27 @@
 /**
- * Robot Navigator Extension
+ * Robot Navigator Extension - Compatible MakeCode micro:bit
  * Navigation autonome avec correction vectorielle
+ * Configuration par référencement de fonctions existantes
+ * 
+ * Copiez ce code dans main.ts de votre projet MakeCode
  */
 
 //% weight=100 color=#1d26a5 icon="\uf1b9" block="Robot Navigator"
 //% groups=['Configuration', 'Navigation', 'Paramètres', 'Debug']
 namespace robotNavigator {
 
-    // Interfaces pour les callbacks
-    export interface PositionProvider {
-        getX: () => number;
-        getY: () => number;
-        getAngle: () => number;
-    }
-
-    export interface MotorController {
-        forward: (speed: number) => void;
-        turnLeft: (speed: number) => void;
-        turnRight: (speed: number) => void;
-        stop: () => void;
-        setMotorSpeeds: (leftSpeed: number, rightSpeed: number) => void;
-    }
-
-    // Variables pour stocker les callbacks
-    let positionProvider: PositionProvider = null;
-    let motorController: MotorController = null;
+    // Variables pour stocker les références de fonctions
+    let getXFunction: () => number = null;
+    let getYFunction: () => number = null;
+    let getAngleDegFunction: () => number = null;
+    let leftMotorFunction: (speed: number) => void = null;
+    let rightMotorFunction: (speed: number) => void = null;
+    let stopMotorFunction: () => void = null;
 
     // Variables internes
     let vitesse = 50
     let tolerancePosition = 10
-    let toleranceAngle = 10
+    let toleranceAngleDeg = 10
     let correctionGain = 0.5
     let maxCorrection = 30
     let waypoints: number[][] = []
@@ -37,110 +29,130 @@ namespace robotNavigator {
     let navigationActive = false
     let correctionActive = true
     let lastError = 0
+    let configurationComplete = false
+
+    // ====== CONFIGURATION PAR RÉFÉRENCES DE FONCTIONS =======
 
     /**
-     * Configure les fonctions de position
-     * @param getX fonction qui retourne la position X
-     * @param getY fonction qui retourne la position Y
-     * @param getAngle fonction qui retourne l'angle
-     */
-    //% block="configurer position avec|X $getX|Y $getY|angle $getAngle"
-    //% group="Configuration"
-    //% weight=100
-    //% inlineInputMode=inline
-    export function configurePosition(
-        getX: () => number,
-        getY: () => number,
-        getAngle: () => number
-    ): void {
-        positionProvider = {
-            getX: getX,
-            getY: getY,
-            getAngle: getAngle
-        };
-    }
-
-    /**
-     * Configure les fonctions moteur de base
-     * @param forward fonction pour avancer
-     * @param turnLeft fonction pour tourner à gauche
-     * @param turnRight fonction pour tourner à droite
-     * @param stop fonction pour arrêter
-     */
-    //% block="configurer moteurs|avancer $forward|gauche $turnLeft|droite $turnRight|stop $stop"
-    //% group="Configuration"
-    //% weight=99
-    //% inlineInputMode=inline
-    export function configureMotors(
-        forward: (speed: number) => void,
-        turnLeft: (speed: number) => void,
-        turnRight: (speed: number) => void,
-        stop: () => void
-    ): void {
-        motorController = {
-            forward: forward,
-            turnLeft: turnLeft,
-            turnRight: turnRight,
-            stop: stop,
-            setMotorSpeeds: (left: number, right: number) => {
-                // Par défaut, utilise les fonctions de base
-                // Cette fonction sera écrasée si on utilise configureMotorsDifferential
-                if (left > 0 && right > 0) {
-                    forward(Math.min(left, right));
-                } else if (left > right) {
-                    turnLeft(left - right);
-                } else if (right > left) {
-                    turnRight(right - left);
-                } else {
-                    stop();
-                }
-            }
-        };
-    }
-
-    /**
-     * Configure les moteurs avec contrôle différentiel
-     * @param setLeftSpeed fonction pour la vitesse du moteur gauche
-     * @param setRightSpeed fonction pour la vitesse du moteur droit
-     */
-    //% block="configurer moteurs différentiels|gauche $setLeftSpeed|droite $setRightSpeed"
+    * Configurer la fonction qui retourne la position Y
+    * Ce bloc permet de définir votre propre logique pour obtenir Y
+    */
+    //% block="configurer function position Y"
     //% group="Configuration"
     //% weight=98
-    //% inlineInputMode=inline
-    export function configureMotorsDifferential(
-        setLeftSpeed: (speed: number) => void,
-        setRightSpeed: (speed: number) => void
-    ): void {
-        if (!motorController) {
-            motorController = {
-                forward: (speed: number) => {
-                    setLeftSpeed(speed);
-                    setRightSpeed(speed);
-                },
-                turnLeft: (speed: number) => {
-                    setLeftSpeed(0);
-                    setRightSpeed(speed);
-                },
-                turnRight: (speed: number) => {
-                    setLeftSpeed(speed);
-                    setRightSpeed(0);
-                },
-                stop: () => {
-                    setLeftSpeed(0);
-                    setRightSpeed(0);
-                },
-                setMotorSpeeds: (left: number, right: number) => {
-                    setLeftSpeed(left);
-                    setRightSpeed(right);
-                }
-            };
+    //% handlerStatement=1
+    export function configureYPositionFunc(handler: () => void): void {
+        getYFunction = handler as any as (() => number);
+    }
+
+    /**
+     * Configurer la fonction qui retourne la position X
+     */
+    //% block="configurer function position X"
+    //% group="Configuration"
+    //% weight=97
+    //% handlerStatement=1
+    export function configureXPosition(handler: () => void): void {
+        getXFunction = handler as any as (() => number);
+    }
+
+    /**
+     * Configurer la fonction qui retourne l'angle
+     */
+    //% block="configurer function position angle en degrees"
+    //% group="Configuration"
+    //% weight=96
+    //% handlerStatement=1
+    export function configureAngleDegPosition(handler: () => void): void {
+        getAngleDegFunction = handler as any as (() => number);
+    }
+
+    /**
+     * Configurer la fonction du moteur gauche
+     */
+    //% block="configurer function moteur gauche"
+    //% group="Configuration"
+    //% weight=95
+    //% handlerStatement=1
+    export function configureLeftMotor(handler: (speed: number) => void): void {
+        leftMotorFunction = handler as any as ((speed: number) => void);
+    }
+
+    /**
+     * Configurer la fonction du moteur droit
+     */
+    //% block="configurer function moteur droit"
+    //% group="Configuration"
+    //% weight=94
+    //% handlerStatement=1
+    export function configureRightMotor(handler: (speed: number) => void): void {
+        rightMotorFunction = handler as any as ((speed: number) => void);
+    }
+
+    /**
+     * Configurer la fonction d'arrêt des moteurs
+     */
+    //% block="configurer function arrêt moteurs"
+    //% group="Configuration"
+    //% weight=93
+    //% handlerStatement=1
+    export function configureStopMotors(handler: () => void): void {
+        stopMotorFunction = handler as any as (() => void);
+    }
+
+
+    /**
+     * Vérifier si la configuration est complète
+     */
+    //% block="configuration complète ?"
+    //% group="Configuration"
+    //% weight=89
+    export function isConfigurationComplete(): boolean {
+        return configurationComplete;
+    }
+
+    /**
+     * Tester la configuration
+     */
+    //% block="tester configuration"
+    //% group="Configuration"
+    //% weight=88
+    export function testConfiguration(): void {
+        if (configurationComplete) {
+            basic.showString("POS: " + Math.round(getXFunction()) + "," + Math.round(getYFunction()));
+            basic.pause(1000);
+            basic.showString("ANGLE: " + Math.round(getAngleDegFunction()));
+            basic.pause(1000);
+            basic.showString("TEST MOTEUR");
+            leftMotorFunction(30);
+            rightMotorFunction(30);
+            basic.pause(500);
+            stopMotorFunction();
+            basic.showString("OK");
         } else {
-            motorController.setMotorSpeeds = (left: number, right: number) => {
-                setLeftSpeed(left);
-                setRightSpeed(right);
-            };
+            basic.showString("INCOMPLET");
         }
     }
+
+    // Fonction interne pour vérifier la configuration
+    function checkConfiguration(): void {
+        configurationComplete = (
+            getXFunction != null &&
+            getYFunction != null &&
+            getAngleDegFunction != null &&
+            leftMotorFunction != null &&
+            rightMotorFunction != null &&
+            stopMotorFunction != null
+        );
+
+        if (configurationComplete) {
+            basic.showIcon(IconNames.Yes);
+            basic.pause(500);
+            basic.clearScreen();
+        }
+    }
+
+    // ====== FONCTIONS DE NAVIGATION =======
 
     /**
      * Ajoute un point de passage
@@ -151,6 +163,7 @@ namespace robotNavigator {
     //% x.defl=100 y.defl=100
     export function addWaypoint(x: number, y: number): void {
         waypoints.push([x, y]);
+        basic.showNumber(waypoints.length);
     }
 
     /**
@@ -162,6 +175,7 @@ namespace robotNavigator {
     export function clearWaypoints(): void {
         waypoints = [];
         currentWaypoint = 0;
+        basic.showString("CLEAR");
     }
 
     /**
@@ -171,13 +185,18 @@ namespace robotNavigator {
     //% group="Navigation"
     //% weight=78
     export function startNavigation(): void {
-        if (!positionProvider || !motorController) {
-            basic.showString("ERR");
+        if (!configurationComplete) {
+            basic.showString("ERR CONFIG");
+            return;
+        }
+        if (waypoints.length == 0) {
+            basic.showString("ERR POINTS");
             return;
         }
         navigationActive = true;
         currentWaypoint = 0;
         lastError = 0;
+        basic.showString("START NAV");
     }
 
     /**
@@ -188,30 +207,43 @@ namespace robotNavigator {
     //% weight=77
     export function stopNavigation(): void {
         navigationActive = false;
-        if (motorController) {
-            motorController.stop();
+        if (stopMotorFunction != null) {
+            stopMotorFunction();
         }
+        basic.showString("STOP NAV");
     }
 
     /**
-     * Active la correction vectorielle
+     * Navigation active ?
      */
-    //% block="activer correction"
+    //% block="navigation active ?"
     //% group="Navigation"
     //% weight=76
-    export function enableCorrection(): void {
-        correctionActive = true;
+    export function isNavigationActive(): boolean {
+        return navigationActive;
     }
 
     /**
-     * Désactive la correction vectorielle
+     * Point courant
      */
-    //% block="désactiver correction"
+    //% block="point courant"
     //% group="Navigation"
     //% weight=75
-    export function disableCorrection(): void {
-        correctionActive = false;
+    export function getCurrentWaypoint(): number {
+        return currentWaypoint + 1;
     }
+
+    /**
+     * Nombre total de points
+     */
+    //% block="nombre de points"
+    //% group="Navigation"
+    //% weight=74
+    export function getTotalWaypoints(): number {
+        return waypoints.length;
+    }
+
+    // ====== PARAMÈTRES =======
 
     /**
      * Définit la vitesse
@@ -243,7 +275,7 @@ namespace robotNavigator {
     //% weight=68
     //% tolerance.defl=10
     export function setAngleTolerance(tolerance: number): void {
-        toleranceAngle = tolerance;
+        toleranceAngleDeg = tolerance;
     }
 
     /**
@@ -258,30 +290,119 @@ namespace robotNavigator {
     }
 
     /**
-     * Affiche l'état
+     * Active la correction vectorielle
      */
-    //% block="afficher état"
+    //% block="activer correction"
+    //% group="Navigation"
+    //% weight=73
+    export function enableCorrection(): void {
+        correctionActive = true;
+        basic.showString("CORR ON");
+    }
+
+    /**
+     * Désactive la correction vectorielle
+     */
+    //% block="désactiver correction"
+    //% group="Navigation"
+    //% weight=72
+    export function disableCorrection(): void {
+        correctionActive = false;
+        basic.showString("CORR OFF");
+    }
+
+    // ====== DEBUG =======
+
+    /**
+     * Affiche la position actuelle
+     */
+    //% block="afficher position"
     //% group="Debug"
     //% weight=60
-    export function showStatus(): void {
+    export function showPosition(): void {
+        if (configurationComplete) {
+            basic.showString("X:" + Math.round(getXFunction()));
+            basic.pause(1000);
+            basic.showString("Y:" + Math.round(getYFunction()));
+            basic.pause(1000);
+            basic.showString("A:" + Math.round(getAngleDegFunction()));
+        } else {
+            basic.showString("NO CONFIG");
+        }
+    }
+
+    /**
+     * Affiche l'état de navigation
+     */
+    //% block="afficher état navigation"
+    //% group="Debug"
+    //% weight=59
+    export function showNavigationStatus(): void {
         if (navigationActive && waypoints.length > 0) {
-            basic.showNumber(currentWaypoint + 1);
+            basic.showString("NAV " + (currentWaypoint + 1) + "/" + waypoints.length);
+        } else if (waypoints.length == 0) {
+            basic.showString("NO POINTS");
         } else {
             basic.showIcon(IconNames.No);
         }
     }
 
-    // Fonctions internes
-    function getPosition(): { x: number, y: number, angle: number } {
-        if (!positionProvider) {
-            return { x: 0, y: 0, angle: 0 };
+    /**
+     * Obtenir la position X actuelle
+     */
+    //% block="position X actuelle"
+    //% group="Debug"
+    //% weight=58
+    export function getCurrentX(): number {
+        if (getXFunction != null) {
+            return getXFunction();
         }
-        return {
-            x: positionProvider.getX(),
-            y: positionProvider.getY(),
-            angle: positionProvider.getAngle()
-        };
+        return 0;
     }
+
+    /**
+     * Obtenir la position Y actuelle
+     */
+    //% block="position Y actuelle"
+    //% group="Debug"
+    //% weight=57
+    export function getCurrentY(): number {
+        if (getYFunction != null) {
+            return getYFunction();
+        }
+        return 0;
+    }
+
+    /**
+     * Obtenir l'angle actuel
+     */
+    //% block="angle actuel"
+    //% group="Debug"
+    //% weight=56
+    export function getCurrentAngle(): number {
+        if (getAngleDegFunction != null) {
+            return getAngleDegFunction();
+        }
+        return 0;
+    }
+
+    /**
+     * Distance au point cible
+     */
+    //% block="distance au point cible"
+    //% group="Debug"
+    //% weight=55
+    export function getDistanceToTarget(): number {
+        if (configurationComplete && waypoints.length > 0 && currentWaypoint < waypoints.length) {
+            let target = waypoints[currentWaypoint];
+            let currentX = getXFunction();
+            let currentY = getYFunction();
+            return calculateDistance(currentX, currentY, target[0], target[1]);
+        }
+        return 0;
+    }
+
+    // ====== FONCTIONS INTERNES DE NAVIGATION =======
 
     function calculateDistance(x1: number, y1: number, x2: number, y2: number): number {
         let dx = x2 - x1;
@@ -313,20 +434,23 @@ namespace robotNavigator {
     }
 
     function navigateToPoint(targetX: number, targetY: number): boolean {
-        let pos = getPosition();
-        let distance = calculateDistance(pos.x, pos.y, targetX, targetY);
+        let currentX = getXFunction();
+        let currentY = getYFunction();
+        let currentAngle = getAngleDegFunction();
+
+        let distance = calculateDistance(currentX, currentY, targetX, targetY);
 
         if (distance <= tolerancePosition) {
-            motorController.stop();
+            stopMotorFunction();
             return true;
         }
 
-        let targetAngle = calculateTargetAngle(pos.x, pos.y, targetX, targetY);
-        let angleDiff = normalizeAngleDifference(targetAngle - pos.angle);
+        let targetAngle = calculateTargetAngle(currentX, currentY, targetX, targetY);
+        let angleDiff = normalizeAngleDifference(targetAngle - currentAngle);
 
         if (correctionActive && Math.abs(angleDiff) <= 45) {
             // Navigation avec correction vectorielle
-            let lateralError = calculateLateralError(pos.x, pos.y, pos.angle, targetX, targetY);
+            let lateralError = calculateLateralError(currentX, currentY, currentAngle, targetX, targetY);
             let normalizedError = lateralError / Math.max(distance, 10);
             let correction = normalizedError * correctionGain * 100;
             correction += (normalizedError - lastError) * 20;
@@ -334,27 +458,33 @@ namespace robotNavigator {
 
             // Appliquer la correction
             correction = Math.constrain(correction, -maxCorrection, maxCorrection);
-            let leftSpeed = Math.constrain(vitesse + correction, 0, 100);
-            let rightSpeed = Math.constrain(vitesse - correction, 0, 100);
-            motorController.setMotorSpeeds(leftSpeed, rightSpeed);
-        } else if (Math.abs(angleDiff) > toleranceAngle) {
+            let leftSpeed = Math.constrain(vitesse + correction, -100, 100);
+            let rightSpeed = Math.constrain(vitesse - correction, -100, 100);
+
+            leftMotorFunction(leftSpeed);
+            rightMotorFunction(rightSpeed);
+
+        } else if (Math.abs(angleDiff) > toleranceAngleDeg) {
             // Rotation sur place
             if (angleDiff > 0) {
-                motorController.turnRight(Math.min(vitesse, Math.abs(angleDiff)));
+                leftMotorFunction(Math.min(vitesse, Math.abs(angleDiff)));
+                rightMotorFunction(-Math.min(vitesse, Math.abs(angleDiff)));
             } else {
-                motorController.turnLeft(Math.min(vitesse, Math.abs(angleDiff)));
+                leftMotorFunction(-Math.min(vitesse, Math.abs(angleDiff)));
+                rightMotorFunction(Math.min(vitesse, Math.abs(angleDiff)));
             }
         } else {
             // Avancer tout droit
-            motorController.forward(vitesse);
+            leftMotorFunction(vitesse);
+            rightMotorFunction(vitesse);
         }
 
         return false;
     }
 
-    // Boucle de navigation
+    // ====== BOUCLE DE NAVIGATION =======
     basic.forever(function () {
-        if (navigationActive && waypoints.length > 0 && positionProvider && motorController) {
+        if (navigationActive && waypoints.length > 0 && configurationComplete) {
             let target = waypoints[currentWaypoint];
 
             if (navigateToPoint(target[0], target[1])) {
@@ -362,13 +492,23 @@ namespace robotNavigator {
                 basic.pause(500);
                 basic.clearScreen();
                 currentWaypoint = (currentWaypoint + 1) % waypoints.length;
+
+                // Si on a fait tous les points, arrêter
+                if (currentWaypoint == 0 && waypoints.length > 1) {
+                    basic.showString("V");
+                    navigationActive = false;
+                    stopMotorFunction();
+                }
             }
         }
     });
 }
 
 
-//% weight=100 color=#1d26a5 icon="\uf1b9" block="Odometry"
+
+
+
+//% weight=100 color=#444444 icon="\uf1b9" block="Odometry"
 namespace odometry {
     // Global variables for position tracking
     export let X = 0;           // X position in mm
@@ -544,6 +684,17 @@ namespace odometry {
 
 
 
+    /**
+     * Afficher position actuelle
+     */
+    //% block="afficher position odométrie"
+    export function showPosition(): void {
+        basic.showString("X:" + Math.round(X));
+        basic.pause(1000);
+        basic.showString("Y:" + Math.round(Y));
+        basic.pause(1000);
+        basic.showString("A:" + Math.round(getOrientationDegrees()));
+    }
 
 
     /**

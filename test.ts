@@ -3,7 +3,7 @@
  * Exemple d'utilisation de l'extension Robot Navigator
  * avec différentes extensions de robots
  */
-
+/*
 // ========================================
 // EXEMPLE 1: Avec une extension générique
 // ========================================
@@ -209,3 +209,4 @@ pins.onPulsed(DigitalPin.P2, PulseValue.High, () => {
 pins.onPulsed(DigitalPin.P8, PulseValue.High, () => {
     monDriver.onRightEncoder()
 })
+*/
