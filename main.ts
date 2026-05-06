@@ -118,10 +118,10 @@ namespace robotNavigator {
      * Alternative aux 3 callbacks configureXPosition/Y/Angle.
      * À appeler régulièrement (ex: dans loops.everyInterval) après chaque update odométrie.
      */
-    //% block="set position actuelle x %x y %y angle %angleDeg"
+    //% block="set position actuelle (deg) x %x y %y angle %angleDeg"
     //% group="Configuration"
     //% weight=92
-    export function setCurrentPosition(x: number, y: number, angleDeg: number): void {
+    export function setCurrentPositionDeg(x: number, y: number, angleDeg: number): void {
         pushedX = x;
         pushedY = y;
         pushedAngleDeg = angleDeg;
@@ -302,11 +302,11 @@ namespace robotNavigator {
     /**
      * Définit la tolérance angulaire
      */
-    //% block="tolérance angle $tolerance°"
+    //% block="tolérance angle (deg) $tolerance"
     //% group="Paramètres"
     //% weight=68
     //% tolerance.defl=10
-    export function setAngleTolerance(tolerance: number): void {
+    export function setAngleToleranceDeg(tolerance: number): void {
         toleranceAngleDeg = tolerance;
     }
 
@@ -414,10 +414,10 @@ namespace robotNavigator {
     /**
      * Obtenir l'angle actuel
      */
-    //% block="angle actuel"
+    //% block="angle actuel (deg)"
     //% group="Debug"
     //% weight=56
-    export function getCurrentAngle(): number {
+    export function getCurrentAngleDeg(): number {
         if (usePushedPosition) {
             return pushedAngleDeg;
         }
@@ -585,16 +585,29 @@ namespace odometry {
     }
 
     /**
-     * Set position and orientation to specific values
+     * Set position and orientation to specific values (angle in radians).
      * @param x X position in mm
      * @param y Y position in mm
-     * @param angle Orientation in radians
+     * @param angleRad Orientation in radians
      */
-    //% block="set position to x: %x|y: %y|angle: %angle"
-    export function setPosition(x: number, y: number, anglerad: number) {
+    //% block="set position (rad) to x: %x|y: %y|angle (rad): %angleRad"
+    export function setPositionRad(x: number, y: number, angleRad: number) {
         X = x;
         Y = y;
-        alphaRad = anglerad;
+        alphaRad = angleRad;
+    }
+
+    /**
+     * Set position and orientation to specific values (angle in degrees).
+     * @param x X position in mm
+     * @param y Y position in mm
+     * @param angleDeg Orientation in degrees
+     */
+    //% block="set position to x: %x|y: %y|angle (deg): %angleDeg"
+    export function setPositionDeg(x: number, y: number, angleDeg: number) {
+        X = x;
+        Y = y;
+        alphaRad = angleDeg * Math.PI / 180;
     }
 
     /**
@@ -626,8 +639,10 @@ namespace odometry {
         let diffCount = rightDeltaMm - leftDeltaMm;
         let deltaTheta = diffCount / entraxeInMM; // In radians
 
-        if (Math.abs(diffCount) < 0.001) {
-            // Movement is essentially straight
+        if (Math.abs(diffCount) < 0.05) {
+            // Movement is essentially straight (seuil 0.05 mm pour eviter la
+            // bascule arc/segment a chaque cycle a cause du bruit de mesure,
+            // tout en restant assez sensible aux petites courbures reelles)
             X += deltaDist * Math.cos(alphaRad);
             Y += deltaDist * Math.sin(alphaRad);
         } else {
