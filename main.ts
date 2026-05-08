@@ -2,8 +2,6 @@
  * Robot Navigator Extension - Compatible MakeCode micro:bit
  * Navigation autonome avec correction vectorielle
  * Configuration par référencement de fonctions existantes
- * 
- * Copiez ce code dans main.ts de votre projet MakeCode
  */
 
 //% weight=100 color=#1d26a5 icon="\uf1b9" block="Robot Navigator"
@@ -18,13 +16,6 @@ namespace robotNavigator {
     let rightMotorFunction: (speed: number) => void = null;
     let stopMotorFunction: () => void = null;
 
-    // Push-based position (alternative aux callbacks getXFunction/Y/Angle).
-    // Activé dès qu'on appelle setCurrentPosition().
-    let pushedX: number = 0;
-    let pushedY: number = 0;
-    let pushedAngleDeg: number = 0;
-    let usePushedPosition: boolean = false;
-
     // Variables internes
     let vitesse = 50
     let tolerancePosition = 10
@@ -36,7 +27,6 @@ namespace robotNavigator {
     let navigationActive = false
     let correctionActive = true
     let lastError = 0
-    let configurationComplete = false
 
     // ====== CONFIGURATION PAR RÉFÉRENCES DE FONCTIONS =======
 
@@ -50,7 +40,6 @@ namespace robotNavigator {
     //% handlerStatement=1
     export function configureYPositionFunc(handler: () => void): void {
         getYFunction = handler as any as (() => number);
-        checkConfiguration();
     }
 
     /**
@@ -62,7 +51,6 @@ namespace robotNavigator {
     //% handlerStatement=1
     export function configureXPosition(handler: () => void): void {
         getXFunction = handler as any as (() => number);
-        checkConfiguration();
     }
 
     /**
@@ -74,7 +62,6 @@ namespace robotNavigator {
     //% handlerStatement=1
     export function configureAngleDegPosition(handler: () => void): void {
         getAngleDegFunction = handler as any as (() => number);
-        checkConfiguration();
     }
 
     /**
@@ -86,7 +73,6 @@ namespace robotNavigator {
     //% handlerStatement=1
     export function configureLeftMotor(handler: (speed: number) => void): void {
         leftMotorFunction = handler as any as ((speed: number) => void);
-        checkConfiguration();
     }
 
     /**
@@ -98,7 +84,6 @@ namespace robotNavigator {
     //% handlerStatement=1
     export function configureRightMotor(handler: (speed: number) => void): void {
         rightMotorFunction = handler as any as ((speed: number) => void);
-        checkConfiguration();
     }
 
     /**
@@ -110,34 +95,15 @@ namespace robotNavigator {
     //% handlerStatement=1
     export function configureStopMotors(handler: () => void): void {
         stopMotorFunction = handler as any as (() => void);
-        checkConfiguration();
     }
 
-    /**
-     * Définir la position actuelle du robot (push-based).
-     * Alternative aux 3 callbacks configureXPosition/Y/Angle.
-     * À appeler régulièrement (ex: dans loops.everyInterval) après chaque update odométrie.
-     */
-    //% block="set position actuelle (deg) x %x y %y angle %angleDeg"
-    //% group="Configuration"
-    //% weight=92
-    export function setCurrentPositionDeg(x: number, y: number, angleDeg: number): void {
-        pushedX = x;
-        pushedY = y;
-        pushedAngleDeg = angleDeg;
-        usePushedPosition = true;
-        checkConfiguration();
-    }
-
-
-    /**
-     * Vérifier si la configuration est complète
-     */
-    //% block="configuration complète ?"
-    //% group="Configuration"
-    //% weight=89
-    export function isConfigurationComplete(): boolean {
-        return configurationComplete;
+    function isConfigurationComplete(): boolean {
+        return getXFunction != null
+            && getYFunction != null
+            && getAngleDegFunction != null
+            && leftMotorFunction != null
+            && rightMotorFunction != null
+            && stopMotorFunction != null;
     }
 
     /**
@@ -147,7 +113,7 @@ namespace robotNavigator {
     //% group="Configuration"
     //% weight=88
     export function testConfiguration(): void {
-        if (configurationComplete) {
+        if (isConfigurationComplete()) {
             basic.showString("POS: " + Math.round(getXFunction()) + "," + Math.round(getYFunction()));
             basic.pause(1000);
             basic.showString("ANGLE: " + Math.round(getAngleDegFunction()));
@@ -160,27 +126,6 @@ namespace robotNavigator {
             basic.showString("OK");
         } else {
             basic.showString("INCOMPLET");
-        }
-    }
-
-    // Fonction interne pour vérifier la configuration
-    function checkConfiguration(): void {
-        let posOk = usePushedPosition || (
-            getXFunction != null &&
-            getYFunction != null &&
-            getAngleDegFunction != null
-        );
-        let motorsOk = (
-            leftMotorFunction != null &&
-            rightMotorFunction != null &&
-            stopMotorFunction != null
-        );
-        configurationComplete = posOk && motorsOk;
-
-        if (configurationComplete) {
-            basic.showIcon(IconNames.Yes);
-            basic.pause(500);
-            basic.clearScreen();
         }
     }
 
@@ -217,7 +162,7 @@ namespace robotNavigator {
     //% group="Navigation"
     //% weight=78
     export function startNavigation(): void {
-        if (!configurationComplete) {
+        if (!isConfigurationComplete()) {
             basic.showString("ERR CONFIG");
             return;
         }
@@ -352,7 +297,7 @@ namespace robotNavigator {
     //% group="Debug"
     //% weight=60
     export function showPosition(): void {
-        if (configurationComplete) {
+        if (isConfigurationComplete()) {
             basic.showString("X:" + Math.round(getXFunction()));
             basic.pause(1000);
             basic.showString("Y:" + Math.round(getYFunction()));
@@ -386,9 +331,6 @@ namespace robotNavigator {
     //% group="Debug"
     //% weight=58
     export function getCurrentX(): number {
-        if (usePushedPosition) {
-            return pushedX;
-        }
         if (getXFunction != null) {
             return getXFunction();
         }
@@ -402,9 +344,6 @@ namespace robotNavigator {
     //% group="Debug"
     //% weight=57
     export function getCurrentY(): number {
-        if (usePushedPosition) {
-            return pushedY;
-        }
         if (getYFunction != null) {
             return getYFunction();
         }
@@ -418,9 +357,6 @@ namespace robotNavigator {
     //% group="Debug"
     //% weight=56
     export function getCurrentAngleDeg(): number {
-        if (usePushedPosition) {
-            return pushedAngleDeg;
-        }
         if (getAngleDegFunction != null) {
             return getAngleDegFunction();
         }
@@ -434,11 +370,9 @@ namespace robotNavigator {
     //% group="Debug"
     //% weight=55
     export function getDistanceToTarget(): number {
-        if (configurationComplete && waypoints.length > 0 && currentWaypoint < waypoints.length) {
+        if (isConfigurationComplete() && waypoints.length > 0 && currentWaypoint < waypoints.length) {
             let target = waypoints[currentWaypoint];
-            let currentX = usePushedPosition ? pushedX : getXFunction();
-            let currentY = usePushedPosition ? pushedY : getYFunction();
-            return calculateDistance(currentX, currentY, target[0], target[1]);
+            return calculateDistance(getXFunction(), getYFunction(), target[0], target[1]);
         }
         return 0;
     }
@@ -475,9 +409,9 @@ namespace robotNavigator {
     }
 
     function navigateToPoint(targetX: number, targetY: number): boolean {
-        let currentX = usePushedPosition ? pushedX : getXFunction();
-        let currentY = usePushedPosition ? pushedY : getYFunction();
-        let currentAngle = usePushedPosition ? pushedAngleDeg : getAngleDegFunction();
+        let currentX = getXFunction();
+        let currentY = getYFunction();
+        let currentAngle = getAngleDegFunction();
 
         let distance = calculateDistance(currentX, currentY, targetX, targetY);
 
@@ -525,7 +459,7 @@ namespace robotNavigator {
 
     // ====== BOUCLE DE NAVIGATION =======
     basic.forever(function () {
-        if (navigationActive && waypoints.length > 0 && configurationComplete) {
+        if (navigationActive && waypoints.length > 0) {
             let target = waypoints[currentWaypoint];
 
             if (navigateToPoint(target[0], target[1])) {
@@ -544,9 +478,6 @@ namespace robotNavigator {
         }
     });
 }
-
-
-
 
 
 //% weight=100 color=#444444 icon="\uf1b9" block="Odometry"
@@ -753,30 +684,4 @@ namespace odometry {
     }
 
 
-    /**
-     * Example of how to set up a continuous odometry update
-     * Call this from your main program, not used directly by RobotMovement
-     * @param leftDeltaProvider Function to get left encoder delta (in ticks)
-     * @param rightDeltaProvider Function to get right encoder delta (in ticks)
-     */
-    //% block="Start odometry update loop with %leftDeltaProvider and %rightDeltaProvider"
-    //% draggableParameters="reporter"
-    //% weight=40
-    export function startOdometryUpdateLoop(
-        leftDeltaProvider: () => number,
-        rightDeltaProvider: () => number
-    ): void {
-        // Create a background loop to update odometry every 50ms
-        control.inBackground(() => {
-            while (true) {
-                // Get deltas from encoders
-                const leftDelta = leftDeltaProvider();
-                const rightDelta = rightDeltaProvider();
-                // Update odometry
-                odometry.updateFromTicks(leftDelta, rightDelta);
-                // Wait for next update cycle
-                basic.pause(50);
-            }
-        });
-    }
 }
