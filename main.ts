@@ -758,6 +758,7 @@ namespace asserv {
     let rightMotorFn: (pwm: number) => void = null
     let getDeltaLeftFn: () => number = null
     let getDeltaRightFn: () => number = null
+    let updateEncodersFn: () => void = null
 
     // === Configuration callbacks hardware ===
 
@@ -793,6 +794,18 @@ namespace asserv {
     export function configureEncoders(getLeft: () => number, getRight: () => number): void {
         getDeltaLeftFn = getLeft as any as (() => number)
         getDeltaRightFn = getRight as any as (() => number)
+    }
+
+    /**
+     * Optionnel : callback appele a chaque cycle d'asserv AVANT de lire les deltas.
+     * Necessaire pour les libs encodeurs qui requierent un appel explicite (ex: MagEncoders.getValues()).
+     */
+    //% block="configurer update encodeurs"
+    //% group="Configuration"
+    //% weight=97
+    //% handlerStatement=1
+    export function configureEncoderUpdate(handler: () => void): void {
+        updateEncodersFn = handler as any as (() => void)
     }
 
     /**
@@ -981,6 +994,51 @@ namespace asserv {
         }
     }
 
+    // === Waypoint sequencing (path-following bloquant) ===
+    let waypoints: number[][] = []
+
+    /**
+     * Ajoute un point de passage (mm) a la liste pour runWaypoints().
+     */
+    //% block="ajouter waypoint x %x mm | y %y mm"
+    //% group="Mouvement"
+    //% weight=70
+    export function addWaypoint(x: number, y: number): void {
+        waypoints.push([x, y])
+    }
+
+    /**
+     * Vide la liste de waypoints.
+     */
+    //% block="vider waypoints"
+    //% group="Mouvement"
+    //% weight=69
+    export function clearWaypoints(): void {
+        waypoints = []
+    }
+
+    /**
+     * Combien de waypoints en attente.
+     */
+    //% block="nombre waypoints"
+    //% group="Mouvement"
+    //% weight=68
+    export function getWaypointCount(): number {
+        return waypoints.length
+    }
+
+    /**
+     * Execute la sequence de waypoints en bloquant : pour chaque waypoint, tourne puis avance.
+     */
+    //% block="executer waypoints"
+    //% group="Mouvement"
+    //% weight=67
+    export function runWaypoints(): void {
+        for (let i = 0; i < waypoints.length; i++) {
+            goTo(waypoints[i][0], waypoints[i][1])
+        }
+    }
+
     /**
      * Va au point cartesien (x, y) en mm : tourne vers le point puis avance.
      */
@@ -1043,7 +1101,11 @@ namespace asserv {
             return
         }
 
-        // 1. Lecture encodeurs + integration polaire
+        // 1. Update encoders (pour libs qui requierent un appel explicite type MagEncoders.getValues())
+        if (updateEncodersFn != null) {
+            updateEncodersFn()
+        }
+        // Puis lecture deltas + integration polaire
         let dL = getDeltaLeftFn()
         let dR = getDeltaRightFn()
         let dDist = (dL + dR) * 0.5 * 1000 / TICKS_PAR_METRE
