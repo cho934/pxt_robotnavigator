@@ -685,3 +685,450 @@ namespace odometry {
 
 
 }
+
+
+// =====================================================================
+// Asserv polaire continu (style asserv_chibios simplifié pour micro:bit)
+// =====================================================================
+// Usage minimal :
+//   asserv.configureLeftMotor((pwm) => servos.P1.run(0 - pwm))
+//   asserv.configureRightMotor((pwm) => servos.P2.run(pwm))
+//   asserv.configureEncoders(() => enc.getDeltaLeftValue(), () => enc.getDeltaRightValue())
+//   asserv.configureGeometry(100, 130000)
+//   asserv.start()
+//   asserv.avancer(200)   // bloquant
+//   asserv.tourner(90)
+//   asserv.goTo(200, 200)
+//
+// Architecture :
+//   - basic.forever interne à 50 Hz (PERIOD_MS=20 par défaut)
+//   - Trajectory generator trapézoïdal (accel/cruise/decel) sur dist + angle
+//   - PID complet (P + I + D-on-measurement + Feed-Forward) sur chaque axe
+//   - Mixage final motor_L = out_d - out_a, motor_R = out_d + out_a (clampé ±100)
+//   - Pause/resume pour gérer détection obstacle externe sans perdre la cible
+//% weight=99 color=#2d8659 icon="" block="Asserv polaire"
+//% groups=['Configuration', 'Mouvement', 'Position', 'Controle']
+namespace asserv {
+    // === Etat (cumulé depuis start ou resetPosition) ===
+    let pos_dist = 0
+    let pos_angle = 0
+    let pos_x = 0
+    let pos_y = 0
+
+    // === Trajectory generator state ===
+    let consigne_dist = 0
+    let consigne_angle = 0
+    let target_dist = 0
+    let target_angle = 0
+    let vit_dist = 0
+    let vit_angle = 0
+
+    // === PID memoires ===
+    let integral_d = 0
+    let integral_a = 0
+
+    // === Etat operationnel ===
+    let started = false
+    let paused = false
+
+    // === Parametres avec valeurs par defaut sensibles ===
+    let KP_DIST = 1
+    let KI_DIST = 0.2
+    let KD_DIST = 3
+    let KFF_DIST = 0.45
+    let KP_ANGLE = 3
+    let KI_ANGLE = 0.5
+    let KD_ANGLE = 1
+    let KFF_ANGLE = 0.4
+    let VMAX_DIST = 200
+    let ACCEL_DIST = 600
+    let VMAX_ANGLE = 200
+    let ACCEL_ANGLE = 400
+    let TOL_DIST = 10
+    let TOL_ANGLE = 3
+    let PERIOD_MS = 20
+    let INTEGRAL_MAX = 30
+    let invertAngleMix = false
+    let ENTRAXE_MM = 100
+    let TICKS_PAR_METRE = 130000
+    let MOVE_TIMEOUT_MS = 8000
+
+    // === Callbacks hardware ===
+    let leftMotorFn: (pwm: number) => void = null
+    let rightMotorFn: (pwm: number) => void = null
+    let getDeltaLeftFn: () => number = null
+    let getDeltaRightFn: () => number = null
+
+    // === Configuration callbacks hardware ===
+
+    /**
+     * Definit la fonction qui pilote le moteur gauche (PWM -100..+100)
+     */
+    //% block="configurer moteur gauche"
+    //% group="Configuration"
+    //% weight=100
+    //% handlerStatement=1
+    export function configureLeftMotor(handler: (pwm: number) => void): void {
+        leftMotorFn = handler as any as ((pwm: number) => void)
+    }
+
+    /**
+     * Definit la fonction qui pilote le moteur droit (PWM -100..+100)
+     */
+    //% block="configurer moteur droit"
+    //% group="Configuration"
+    //% weight=99
+    //% handlerStatement=1
+    export function configureRightMotor(handler: (pwm: number) => void): void {
+        rightMotorFn = handler as any as ((pwm: number) => void)
+    }
+
+    /**
+     * Definit les fonctions qui retournent le delta de ticks encodeur depuis le dernier appel
+     */
+    //% block="configurer encodeurs gauche %getLeft droite %getRight"
+    //% group="Configuration"
+    //% weight=98
+    //% draggableParameters="reporter"
+    export function configureEncoders(getLeft: () => number, getRight: () => number): void {
+        getDeltaLeftFn = getLeft as any as (() => number)
+        getDeltaRightFn = getRight as any as (() => number)
+    }
+
+    /**
+     * Geometrie du robot : entraxe (mm) entre les 2 roues, calibration ticks par metre lineaire.
+     */
+    //% block="configurer geometrie entraxe %entraxeMm mm | %ticksPerMeter ticks/m"
+    //% group="Configuration"
+    //% weight=97
+    export function configureGeometry(entraxeMm: number, ticksPerMeter: number): void {
+        ENTRAXE_MM = entraxeMm
+        TICKS_PAR_METRE = ticksPerMeter
+    }
+
+    // === Parameter setters ===
+
+    //% block="PID dist Kp %kp Ki %ki Kd %kd KFF %kff"
+    //% group="Configuration"
+    //% weight=80
+    export function setPidDist(kp: number, ki: number, kd: number, kff: number): void {
+        KP_DIST = kp; KI_DIST = ki; KD_DIST = kd; KFF_DIST = kff
+    }
+
+    //% block="PID angle Kp %kp Ki %ki Kd %kd KFF %kff"
+    //% group="Configuration"
+    //% weight=79
+    export function setPidAngle(kp: number, ki: number, kd: number, kff: number): void {
+        KP_ANGLE = kp; KI_ANGLE = ki; KD_ANGLE = kd; KFF_ANGLE = kff
+    }
+
+    //% block="vitesse max dist %vmaxDist mm/s | angle %vmaxAngle deg/s"
+    //% group="Configuration"
+    //% weight=78
+    export function setMaxVelocity(vmaxDist: number, vmaxAngle: number): void {
+        VMAX_DIST = vmaxDist; VMAX_ANGLE = vmaxAngle
+    }
+
+    //% block="acceleration max dist %accelDist mm/s² | angle %accelAngle deg/s²"
+    //% group="Configuration"
+    //% weight=77
+    export function setMaxAcceleration(accelDist: number, accelAngle: number): void {
+        ACCEL_DIST = accelDist; ACCEL_ANGLE = accelAngle
+    }
+
+    //% block="tolerances arrivee dist %tolDist mm | angle %tolAngle deg"
+    //% group="Configuration"
+    //% weight=76
+    export function setTolerances(tolDist: number, tolAngle: number): void {
+        TOL_DIST = tolDist; TOL_ANGLE = tolAngle
+    }
+
+    //% block="periode controle %periodMs ms"
+    //% group="Configuration"
+    //% weight=75
+    export function setControlPeriod(periodMs: number): void {
+        PERIOD_MS = periodMs
+    }
+
+    //% block="inverser mixage angle %invert"
+    //% group="Configuration"
+    //% weight=74
+    export function setInvertAngleMix(invert: boolean): void {
+        invertAngleMix = invert
+    }
+
+    //% block="timeout mouvement %timeoutMs ms"
+    //% group="Configuration"
+    //% weight=73
+    export function setMoveTimeout(timeoutMs: number): void {
+        MOVE_TIMEOUT_MS = timeoutMs
+    }
+
+    // === Controle (start/stop/pause/resume) ===
+
+    /**
+     * Demarre la boucle d'asserv (basic.forever interne).
+     * A appeler une seule fois apres avoir configure les callbacks et parametres.
+     */
+    //% block="demarrer asserv"
+    //% group="Controle"
+    //% weight=100
+    export function start(): void {
+        if (started) return
+        started = true
+        paused = false
+        // Reset state
+        pos_dist = 0; pos_angle = 0; pos_x = 0; pos_y = 0
+        consigne_dist = 0; consigne_angle = 0
+        target_dist = 0; target_angle = 0
+        vit_dist = 0; vit_angle = 0
+        integral_d = 0; integral_a = 0
+        basic.forever(function () {
+            asservLoop()
+        })
+    }
+
+    /**
+     * Met l'asserv en pause : moteurs OFF, trajectoire figee. Utile pendant detection obstacle.
+     */
+    //% block="pause asserv"
+    //% group="Controle"
+    //% weight=90
+    export function pauseAsserv(): void {
+        paused = true
+    }
+
+    /**
+     * Reprend l'asserv apres pause. Re-aligne consigne sur position actuelle pour eviter le recul.
+     */
+    //% block="reprendre asserv"
+    //% group="Controle"
+    //% weight=89
+    export function resumeAsserv(): void {
+        if (!paused) return
+        consigne_dist = pos_dist
+        consigne_angle = pos_angle
+        target_dist = pos_dist
+        target_angle = pos_angle
+        vit_dist = 0; vit_angle = 0
+        integral_d = 0; integral_a = 0
+        paused = false
+    }
+
+    /**
+     * Stop d'urgence : coupe les moteurs immediatement et annule la trajectoire en cours.
+     */
+    //% block="stop urgence"
+    //% group="Controle"
+    //% weight=80
+    export function stopEmergency(): void {
+        if (leftMotorFn != null) leftMotorFn(0)
+        if (rightMotorFn != null) rightMotorFn(0)
+        target_dist = pos_dist
+        target_angle = pos_angle
+        consigne_dist = pos_dist
+        consigne_angle = pos_angle
+        vit_dist = 0; vit_angle = 0
+        integral_d = 0; integral_a = 0
+    }
+
+    //% block="asserv en pause ?"
+    //% group="Controle"
+    //% weight=70
+    export function isPaused(): boolean {
+        return paused
+    }
+
+    // === Movement primitives (bloquantes) ===
+
+    /**
+     * Avance d'une distance donnee en mm. Bloquant jusqu'a atteindre la fenetre tolerance ou timeout.
+     */
+    //% block="avancer %distMm mm"
+    //% group="Mouvement"
+    //% weight=100
+    export function avancer(distMm: number): void {
+        target_dist = pos_dist + distMm
+        integral_d = 0
+        let timeoutAt = input.runningTime() + MOVE_TIMEOUT_MS
+        while (input.runningTime() < timeoutAt) {
+            if (Math.abs(pos_dist - target_dist) <= TOL_DIST) {
+                if (Math.abs(consigne_dist - target_dist) < 0.5) {
+                    break;
+                }
+            }
+            basic.pause(50)
+        }
+    }
+
+    /**
+     * Pivot sur place de deltaDeg degres (positif = gauche / CCW).
+     */
+    //% block="tourner %deltaDeg deg"
+    //% group="Mouvement"
+    //% weight=99
+    export function tourner(deltaDeg: number): void {
+        target_angle = pos_angle + deltaDeg
+        integral_a = 0
+        let timeoutAt = input.runningTime() + MOVE_TIMEOUT_MS
+        while (input.runningTime() < timeoutAt) {
+            if (Math.abs(pos_angle - target_angle) <= TOL_ANGLE) {
+                if (Math.abs(consigne_angle - target_angle) < 0.5) {
+                    break;
+                }
+            }
+            basic.pause(50)
+        }
+    }
+
+    /**
+     * Va au point cartesien (x, y) en mm : tourne vers le point puis avance.
+     */
+    //% block="aller a x %x mm | y %y mm"
+    //% group="Mouvement"
+    //% weight=98
+    export function goTo(x: number, y: number): void {
+        let dx = x - pos_x
+        let dy = y - pos_y
+        let targetAbsAngle = Math.atan2(dy, dx) * 180 / Math.PI
+        let delta = targetAbsAngle - pos_angle
+        while (delta > 180) {
+            delta = delta - 360
+        }
+        while (delta < -180) {
+            delta = delta + 360
+        }
+        tourner(delta)
+        avancer(Math.sqrt(dx * dx + dy * dy))
+    }
+
+    // === Position getters (pour debug/log) ===
+
+    //% block="position X (mm)" group="Position" weight=100
+    export function getPosX(): number { return pos_x }
+
+    //% block="position Y (mm)" group="Position" weight=99
+    export function getPosY(): number { return pos_y }
+
+    //% block="distance cumulee (mm)" group="Position" weight=98
+    export function getPosDist(): number { return pos_dist }
+
+    //% block="cap (deg)" group="Position" weight=97
+    export function getPosAngle(): number { return pos_angle }
+
+    //% block="consigne distance" group="Position" weight=80
+    export function getConsigneDist(): number { return consigne_dist }
+
+    //% block="consigne angle" group="Position" weight=79
+    export function getConsigneAngle(): number { return consigne_angle }
+
+    /**
+     * Reset la position integree a (0, 0, 0).
+     */
+    //% block="reset position (0, 0, 0)"
+    //% group="Position"
+    //% weight=70
+    export function resetPosition(): void {
+        pos_x = 0; pos_y = 0; pos_dist = 0; pos_angle = 0
+        consigne_dist = 0; consigne_angle = 0
+        target_dist = 0; target_angle = 0
+        vit_dist = 0; vit_angle = 0
+        integral_d = 0; integral_a = 0
+    }
+
+    // === Boucle d'asserv interne (appelee par basic.forever a chaque PERIOD_MS) ===
+    function asservLoop(): void {
+        if (getDeltaLeftFn == null || getDeltaRightFn == null) {
+            basic.pause(PERIOD_MS)
+            return
+        }
+
+        // 1. Lecture encodeurs + integration polaire
+        let dL = getDeltaLeftFn()
+        let dR = getDeltaRightFn()
+        let dDist = (dL + dR) * 0.5 * 1000 / TICKS_PAR_METRE
+        let dAngleDeg = (dR - dL) * 1000 / TICKS_PAR_METRE / ENTRAXE_MM * 180 / Math.PI
+        pos_dist = pos_dist + dDist
+        pos_angle = pos_angle + dAngleDeg
+        pos_x = pos_x + dDist * Math.cos(pos_angle * Math.PI / 180)
+        pos_y = pos_y + dDist * Math.sin(pos_angle * Math.PI / 180)
+
+        if (paused) {
+            if (leftMotorFn != null) leftMotorFn(0)
+            if (rightMotorFn != null) rightMotorFn(0)
+            basic.pause(PERIOD_MS)
+            return
+        }
+
+        // 2. Trajectory generator distance
+        let restant_d = target_dist - consigne_dist
+        if (Math.abs(restant_d) > 0.1) {
+            let sens_d = restant_d >= 0 ? 1 : -1
+            let v_brake_d = Math.sqrt(2 * ACCEL_DIST * Math.abs(restant_d))
+            let v_target_d = sens_d * Math.min(VMAX_DIST, v_brake_d)
+            let dv_d = v_target_d - vit_dist
+            let dv_max_d = ACCEL_DIST * PERIOD_MS / 1000
+            if (Math.abs(dv_d) > dv_max_d) {
+                dv_d = dv_max_d * (dv_d >= 0 ? 1 : -1)
+            }
+            vit_dist = vit_dist + dv_d
+            consigne_dist = consigne_dist + vit_dist * PERIOD_MS / 1000
+        } else {
+            consigne_dist = target_dist
+            vit_dist = 0
+        }
+
+        // 3. Trajectory generator angle
+        let restant_a = target_angle - consigne_angle
+        if (Math.abs(restant_a) > 0.1) {
+            let sens_a = restant_a >= 0 ? 1 : -1
+            let v_brake_a = Math.sqrt(2 * ACCEL_ANGLE * Math.abs(restant_a))
+            let v_target_a = sens_a * Math.min(VMAX_ANGLE, v_brake_a)
+            let dv_a = v_target_a - vit_angle
+            let dv_max_a = ACCEL_ANGLE * PERIOD_MS / 1000
+            if (Math.abs(dv_a) > dv_max_a) {
+                dv_a = dv_max_a * (dv_a >= 0 ? 1 : -1)
+            }
+            vit_angle = vit_angle + dv_a
+            consigne_angle = consigne_angle + vit_angle * PERIOD_MS / 1000
+        } else {
+            consigne_angle = target_angle
+            vit_angle = 0
+        }
+
+        // 4. PID distance avec integrale anti-windup et D-on-measurement
+        let err_d = consigne_dist - pos_dist
+        integral_d = integral_d + err_d * PERIOD_MS / 1000
+        if (integral_d > INTEGRAL_MAX) integral_d = INTEGRAL_MAX
+        if (integral_d < 0 - INTEGRAL_MAX) integral_d = 0 - INTEGRAL_MAX
+        let out_d = KP_DIST * err_d + KI_DIST * integral_d - KD_DIST * dDist + KFF_DIST * vit_dist
+
+        // 5. PID angle (erreur normalisee dans [-180, 180])
+        let err_a = consigne_angle - pos_angle
+        while (err_a > 180) {
+            err_a = err_a - 360
+        }
+        while (err_a < -180) {
+            err_a = err_a + 360
+        }
+        integral_a = integral_a + err_a * PERIOD_MS / 1000
+        if (integral_a > INTEGRAL_MAX) integral_a = INTEGRAL_MAX
+        if (integral_a < 0 - INTEGRAL_MAX) integral_a = 0 - INTEGRAL_MAX
+        let out_a = KP_ANGLE * err_a + KI_ANGLE * integral_a - KD_ANGLE * dAngleDeg + KFF_ANGLE * vit_angle
+        if (invertAngleMix) {
+            out_a = 0 - out_a
+        }
+
+        // 6. Mixage gauche/droite + clamp + apply
+        let vL = out_d - out_a
+        let vR = out_d + out_a
+        if (vL > 100) vL = 100
+        if (vL < -100) vL = -100
+        if (vR > 100) vR = 100
+        if (vR < -100) vR = -100
+        if (leftMotorFn != null) leftMotorFn(vL)
+        if (rightMotorFn != null) rightMotorFn(vR)
+
+        basic.pause(PERIOD_MS)
+    }
+}
