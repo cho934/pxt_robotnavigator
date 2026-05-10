@@ -785,15 +785,25 @@ namespace asserv {
     }
 
     /**
-     * Definit les fonctions qui retournent le delta de ticks encodeur depuis le dernier appel
+     * Definit la fonction qui retourne le delta de ticks encodeur GAUCHE depuis le dernier appel
      */
-    //% block="configurer encodeurs gauche %getLeft droite %getRight"
+    //% block="configurer encodeur gauche"
     //% group="Configuration"
     //% weight=98
-    //% draggableParameters="reporter"
-    export function configureEncoders(getLeft: () => number, getRight: () => number): void {
-        getDeltaLeftFn = getLeft as any as (() => number)
-        getDeltaRightFn = getRight as any as (() => number)
+    //% handlerStatement=1
+    export function configureLeftEncoder(handler: () => void): void {
+        getDeltaLeftFn = handler as any as (() => number)
+    }
+
+    /**
+     * Definit la fonction qui retourne le delta de ticks encodeur DROIT depuis le dernier appel
+     */
+    //% block="configurer encodeur droit"
+    //% group="Configuration"
+    //% weight=97
+    //% handlerStatement=1
+    export function configureRightEncoder(handler: () => void): void {
+        getDeltaRightFn = handler as any as (() => number)
     }
 
     /**
