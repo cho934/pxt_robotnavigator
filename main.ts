@@ -726,6 +726,8 @@ namespace asserv {
     // === PID memoires ===
     let integral_d = 0
     let integral_a = 0
+    // (Plus de variables de zone : le deadband est simple, calcule directement dans la boucle PID
+    // a partir de |target - pos| <= TOL.)
 
     // === Etat operationnel ===
     let started = false
@@ -965,7 +967,8 @@ namespace asserv {
     // === Movement primitives (bloquantes) ===
 
     /**
-     * Avance d'une distance donnee en mm. Bloquant jusqu'a atteindre la fenetre tolerance ou timeout.
+     * Avance d'une distance donnee en mm. Sortie des que pos dans TOL_DIST de la cible
+     * (sans attendre que la consigne plateau, pour permettre le chainage smooth des moves).
      */
     //% block="avancer %distMm mm"
     //% group="Mouvement"
@@ -976,16 +979,15 @@ namespace asserv {
         let timeoutAt = input.runningTime() + MOVE_TIMEOUT_MS
         while (input.runningTime() < timeoutAt) {
             if (Math.abs(pos_dist - target_dist) <= TOL_DIST) {
-                if (Math.abs(consigne_dist - target_dist) < 0.5) {
-                    break;
-                }
+                break;
             }
-            basic.pause(50)
+            basic.pause(20)
         }
     }
 
     /**
      * Pivot sur place de deltaDeg degres (positif = gauche / CCW).
+     * Sortie des que pos_angle dans TOL_ANGLE de la cible (chainage smooth comme avancer).
      */
     //% block="tourner %deltaDeg deg"
     //% group="Mouvement"
@@ -996,11 +998,9 @@ namespace asserv {
         let timeoutAt = input.runningTime() + MOVE_TIMEOUT_MS
         while (input.runningTime() < timeoutAt) {
             if (Math.abs(pos_angle - target_angle) <= TOL_ANGLE) {
-                if (Math.abs(consigne_angle - target_angle) < 0.5) {
-                    break;
-                }
+                break;
             }
-            basic.pause(50)
+            basic.pause(20)
         }
     }
 
@@ -1169,11 +1169,16 @@ namespace asserv {
         }
 
         // 4. PID distance avec integrale anti-windup et D-on-measurement
+        // err_d = ecart entre consigne (trajectoire) et pos (mesuree)
         let err_d = consigne_dist - pos_dist
         integral_d = integral_d + err_d * PERIOD_MS / 1000
         if (integral_d > INTEGRAL_MAX) integral_d = INTEGRAL_MAX
         if (integral_d < 0 - INTEGRAL_MAX) integral_d = 0 - INTEGRAL_MAX
-        let out_d = KP_DIST * err_d + KI_DIST * integral_d - KD_DIST * dDist + KFF_DIST * vit_dist
+        // Deadband simple : si pos dans TOL de target, motors a 0. PID re-engage si pos sort.
+        let out_d = 0
+        if (Math.abs(target_dist - pos_dist) > TOL_DIST) {
+            out_d = KP_DIST * err_d + KI_DIST * integral_d - KD_DIST * dDist + KFF_DIST * vit_dist
+        }
 
         // 5. PID angle (erreur normalisee dans [-180, 180])
         let err_a = consigne_angle - pos_angle
@@ -1183,12 +1188,19 @@ namespace asserv {
         while (err_a < -180) {
             err_a = err_a + 360
         }
+        // Deadband simple angle
+        let err_target_a = target_angle - pos_angle
+        while (err_target_a > 180) err_target_a = err_target_a - 360
+        while (err_target_a < -180) err_target_a = err_target_a + 360
         integral_a = integral_a + err_a * PERIOD_MS / 1000
         if (integral_a > INTEGRAL_MAX) integral_a = INTEGRAL_MAX
         if (integral_a < 0 - INTEGRAL_MAX) integral_a = 0 - INTEGRAL_MAX
-        let out_a = KP_ANGLE * err_a + KI_ANGLE * integral_a - KD_ANGLE * dAngleDeg + KFF_ANGLE * vit_angle
-        if (invertAngleMix) {
-            out_a = 0 - out_a
+        let out_a = 0
+        if (Math.abs(err_target_a) > TOL_ANGLE) {
+            out_a = KP_ANGLE * err_a + KI_ANGLE * integral_a - KD_ANGLE * dAngleDeg + KFF_ANGLE * vit_angle
+            if (invertAngleMix) {
+                out_a = 0 - out_a
+            }
         }
 
         // 6. Mixage gauche/droite + clamp + apply
