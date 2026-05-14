@@ -732,6 +732,7 @@ namespace asserv {
     // === Etat operationnel ===
     let started = false
     let paused = false
+    let prev_loop_t = 0
 
     // === Parametres avec valeurs par defaut sensibles ===
     let KP_DIST = 1
@@ -908,6 +909,7 @@ namespace asserv {
         target_dist = 0; target_angle = 0
         vit_dist = 0; vit_angle = 0
         integral_d = 0; integral_a = 0
+        prev_loop_t = input.runningTime()
         basic.forever(function () {
             asservLoop()
         })
@@ -1112,6 +1114,14 @@ namespace asserv {
             return
         }
 
+        // 0. Mesure dt reel : basic.forever ne tient pas exactement PERIOD_MS a cause
+        // des autres taches MakeCode (scheduler, GC, handlers). Integrer en temps reel
+        // est indispensable sinon la trajectoire avance trop lentement.
+        let now_t = input.runningTime()
+        let dt = (now_t - prev_loop_t) / 1000
+        prev_loop_t = now_t
+        if (dt > 0.2) dt = 0.05
+
         // 1. Update encoders (pour libs qui requierent un appel explicite type MagEncoders.getValues())
         if (updateEncodersFn != null) {
             updateEncodersFn()
@@ -1140,12 +1150,12 @@ namespace asserv {
             let v_brake_d = Math.sqrt(2 * ACCEL_DIST * Math.abs(restant_d))
             let v_target_d = sens_d * Math.min(VMAX_DIST, v_brake_d)
             let dv_d = v_target_d - vit_dist
-            let dv_max_d = ACCEL_DIST * PERIOD_MS / 1000
+            let dv_max_d = ACCEL_DIST * dt
             if (Math.abs(dv_d) > dv_max_d) {
                 dv_d = dv_max_d * (dv_d >= 0 ? 1 : -1)
             }
             vit_dist = vit_dist + dv_d
-            consigne_dist = consigne_dist + vit_dist * PERIOD_MS / 1000
+            consigne_dist = consigne_dist + vit_dist * dt
         } else {
             consigne_dist = target_dist
             vit_dist = 0
@@ -1158,12 +1168,12 @@ namespace asserv {
             let v_brake_a = Math.sqrt(2 * ACCEL_ANGLE * Math.abs(restant_a))
             let v_target_a = sens_a * Math.min(VMAX_ANGLE, v_brake_a)
             let dv_a = v_target_a - vit_angle
-            let dv_max_a = ACCEL_ANGLE * PERIOD_MS / 1000
+            let dv_max_a = ACCEL_ANGLE * dt
             if (Math.abs(dv_a) > dv_max_a) {
                 dv_a = dv_max_a * (dv_a >= 0 ? 1 : -1)
             }
             vit_angle = vit_angle + dv_a
-            consigne_angle = consigne_angle + vit_angle * PERIOD_MS / 1000
+            consigne_angle = consigne_angle + vit_angle * dt
         } else {
             consigne_angle = target_angle
             vit_angle = 0
@@ -1172,7 +1182,7 @@ namespace asserv {
         // 4. PID distance avec integrale anti-windup et D-on-measurement
         // err_d = ecart entre consigne (trajectoire) et pos (mesuree)
         let err_d = consigne_dist - pos_dist
-        integral_d = integral_d + err_d * PERIOD_MS / 1000
+        integral_d = integral_d + err_d * dt
         if (integral_d > INTEGRAL_MAX) integral_d = INTEGRAL_MAX
         if (integral_d < 0 - INTEGRAL_MAX) integral_d = 0 - INTEGRAL_MAX
         // Deadband simple : si pos dans TOL de target, motors a 0. PID re-engage si pos sort.
@@ -1193,7 +1203,7 @@ namespace asserv {
         let err_target_a = target_angle - pos_angle
         while (err_target_a > 180) err_target_a = err_target_a - 360
         while (err_target_a < -180) err_target_a = err_target_a + 360
-        integral_a = integral_a + err_a * PERIOD_MS / 1000
+        integral_a = integral_a + err_a * dt
         if (integral_a > INTEGRAL_MAX) integral_a = INTEGRAL_MAX
         if (integral_a < 0 - INTEGRAL_MAX) integral_a = 0 - INTEGRAL_MAX
         let out_a = 0
