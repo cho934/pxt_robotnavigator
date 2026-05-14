@@ -931,10 +931,11 @@ namespace asserv {
     //% weight=89
     export function resumeAsserv(): void {
         if (!paused) return
+        // Re-aligne la consigne sur la position actuelle pour eviter un saut PID,
+        // mais conserve target_dist / target_angle pour que le mouvement en cours
+        // reprenne la ou il s'est arrete (comportement "stop / reprend").
         consigne_dist = pos_dist
         consigne_angle = pos_angle
-        target_dist = pos_dist
-        target_angle = pos_angle
         vit_dist = 0; vit_angle = 0
         integral_d = 0; integral_a = 0
         paused = false
